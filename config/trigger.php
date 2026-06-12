@@ -31,9 +31,10 @@ return [
             'keepalive' => (int) env('TRIGGER_KEEPALIVE', 0),
 
             // MySQL session variables to apply on connect (for the metadata connection).
-            // Example: {"wait_timeout":7200,"interactive_timeout":7200,"net_read_timeout":3600,"net_write_timeout":3600}
-            'session_variables' => env('TRIGGER_SESSION_VARIABLES')
-                ? (json_decode((string) env('TRIGGER_SESSION_VARIABLES'), true) ?: [])
+            // Example:
+            // - wait_timeout=7200,interactive_timeout=7200
+            'session_variables' => env('TRIGGER_SESSION_VARIABLES', '')
+                ? array_filter(array_map('trim', explode(',', (string) env('TRIGGER_SESSION_VARIABLES'))))
                 : [],
             'subscribers' => [
                 // Huangdijia\Trigger\Subscribers\Heartbeat::class,
