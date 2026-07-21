@@ -36,6 +36,8 @@ class Trigger
 
     protected int $lastKeepalivePingAt = 0;
 
+    protected int $lastCheckpointAt = 0;
+
     protected array $events = [];
 
     protected int $bootTime;
@@ -202,7 +204,15 @@ class Trigger
      */
     public function rememberCurrent(BinLogCurrent $binLogCurrent): void
     {
-        $this->cache->put($this->replicationCacheKey, serialize($binLogCurrent), Carbon::now()->addHours(1));
+        // Resuming from a stale position is strictly better than silently
+        // starting at the stream head: a position the server has purged is
+        // rejected on connect and the start command already falls back to the
+        // head loudly (MySQLReplicationException -> clearCurrent + retry).
+        $this->cache->put(
+            $this->replicationCacheKey,
+            serialize($binLogCurrent),
+            Carbon::now()->addSeconds((int) $this->getConfig('checkpoint_ttl', 86400)),
+        );
     }
 
     /**
@@ -317,6 +327,42 @@ class Trigger
         $events[] = '*.*.*';
 
         $this->fire($events, $event);
+
+        // Checkpoint AFTER the event has been fully processed so a restart
+        // replays (at-least-once) instead of skipping (at-most-once).
+        $this->checkpoint($event);
+    }
+
+    /**
+     * Remember the stream position from the dispatch path, throttled.
+     *
+     * MySQL only emits heartbeat events while the whole binlog is silent, so
+     * on a busy stream the heartbeat-driven rememberCurrent() never runs: the
+     * checkpoint freezes at the position where the load began and eventually
+     * expires. A process restart during a long catch-up then resumes from the
+     * stream head, silently skipping everything between the last processed
+     * event and now. Advancing the checkpoint here keeps the resume position
+     * honest under load; the cache write is throttled to once per
+     * checkpoint_interval seconds. Set checkpoint_interval to 0 to restore
+     * the previous heartbeat-only behavior.
+     */
+    public function checkpoint(EventDTO $event): void
+    {
+        $interval = (int) $this->getConfig('checkpoint_interval', 5);
+
+        if ($interval <= 0) {
+            return;
+        }
+
+        $now = time();
+
+        if ($this->lastCheckpointAt > 0 && ($now - $this->lastCheckpointAt) < $interval) {
+            return;
+        }
+
+        $this->lastCheckpointAt = $now;
+
+        $this->rememberCurrent($event->getEventInfo()->binLogCurrent);
     }
 
     /**
