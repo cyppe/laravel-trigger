@@ -14,7 +14,9 @@ namespace Huangdijia\Trigger\Console;
 use Doctrine\DBAL\Exception as DbalException;
 use Huangdijia\Trigger\Facades\Trigger;
 use Illuminate\Console\Command;
+use InvalidArgumentException;
 use MySQLReplication\Exception\MySQLReplicationException;
+use MySQLReplication\Socket\SocketException;
 use PDOException;
 use Throwable;
 
@@ -42,15 +44,27 @@ class StartCommand extends Command
         $this->listenForSignals();
 
         $keepUp = $this->option('reset') ? false : true;
-        $trigger = Trigger::replication($this->option('replication'));
+        $replication = $this->option('replication');
+
+        if (! is_string($replication)) {
+            throw new InvalidArgumentException('The replication option must be a string.');
+        }
+
+        $trigger = Trigger::replication($replication);
 
         start:
         try {
             if ($this->option('verbose')) {
+                $triggerConfig = $trigger->getConfig();
+
+                if (! is_array($triggerConfig)) {
+                    $triggerConfig = [];
+                }
+
                 $this->info('Configure');
                 $this->table(
                     ['Name', 'Value'],
-                    collect($trigger->getConfig())
+                    collect($triggerConfig)
                         ->merge(['bootat' => date('Y-m-d H:i:s')])
                         ->transform(function ($item, $key) {
                             if (! is_scalar($item)) {
@@ -87,10 +101,14 @@ class StartCommand extends Command
         } catch (MySQLReplicationException $e) {
             $this->error($e->getMessage());
 
-            // clear replication cache
-            $trigger->clearCurrent();
+            if (! $this->shouldRetryReplication($e)) {
+                throw $e;
+            }
 
-            // retry
+            // Transient socket failures retry from the last persisted cursor.
+            // Parser, protocol, source-configuration, and purged-position errors
+            // fail closed and require an explicit operator decision; clearing a
+            // cursor here would silently restart at the current source head.
             $this->info('Retry now');
             sleep(1);
 
@@ -165,5 +183,10 @@ class StartCommand extends Command
             || str_contains($message, 'connection refused')
             || str_contains($message, 'connection timed out')
             || str_contains($message, 'broken pipe');
+    }
+
+    private function shouldRetryReplication(MySQLReplicationException $exception): bool
+    {
+        return $exception instanceof SocketException;
     }
 }
