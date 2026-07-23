@@ -27,7 +27,7 @@ class StartCommand extends Command
      *
      * @var string
      */
-    protected $signature = 'trigger:start {--R|replication=default : replication} {--reset}';
+    protected $signature = 'trigger:start {--R|replication=default : replication} {--reset} {--with-secrets : Reveal secret config values (e.g. password) in verbose output}';
 
     /**
      * The console command description.
@@ -61,12 +61,26 @@ class StartCommand extends Command
                     $triggerConfig = [];
                 }
 
+                $showSecrets = (bool) $this->option('with-secrets');
+
                 $this->info('Configure');
                 $this->table(
                     ['Name', 'Value'],
                     collect($triggerConfig)
                         ->merge(['bootat' => date('Y-m-d H:i:s')])
-                        ->transform(function ($item, $key) {
+                        ->transform(function ($item, $key) use ($showSecrets) {
+                            // Redact secret-like values (password/token/secret)
+                            // unless explicitly revealed with --with-secrets. A
+                            // verbose config dump otherwise leaks credentials into
+                            // container/aggregated logs.
+                            if (! $showSecrets
+                                && is_string($key)
+                                && preg_match('/pass|secret|token/i', $key)
+                                && filled($item)
+                            ) {
+                                $item = '******';
+                            }
+
                             if (! is_scalar($item)) {
                                 $item = json_encode($item, JSON_THROW_ON_ERROR);
                             }
