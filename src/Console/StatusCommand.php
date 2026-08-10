@@ -13,6 +13,7 @@ namespace Huangdijia\Trigger\Console;
 
 use Huangdijia\Trigger\Facades\Trigger;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 
 class StatusCommand extends Command
 {
@@ -35,15 +36,15 @@ class StatusCommand extends Command
         $binLogCurrent = $trigger->getCurrent();
 
         if (is_null($binLogCurrent)) {
-            $this->warn('binlog info of ' . $replication . ' is empty.');
+            $this->warn('binlog info of ' . OutputFormatter::escape((string) $replication) . ' is empty.');
             return;
         }
 
         $this->table(
             ['Name', 'Value'],
             [
-                ['BinLogPosition', $binLogCurrent->getBinLogPosition()],
-                ['BinFileName', $binLogCurrent->getBinFileName()],
+                ['BinLogPosition', OutputFormatter::escape($binLogCurrent->getBinLogPosition())],
+                ['BinFileName', OutputFormatter::escape($binLogCurrent->getBinFileName())],
                 // ['Gtid', $binLogCurrent->getGtid()],
                 // ['MariaDbGtid', $binLogCurrent->getMariaDbGtid()],
             ]

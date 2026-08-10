@@ -40,6 +40,5 @@ jobs:
         run: ./vendor/bin/php-cs-fixer fix $1 --dry-run --diff --verbose --show-progress=dots
       - name: Run Analyse
         run: composer analyse src
-      # - name: Run Test Cases
-      #   run: |
-      #     composer test
+      - name: Run Test Cases
+        run: composer test

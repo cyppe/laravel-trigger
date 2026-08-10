@@ -18,6 +18,7 @@ use InvalidArgumentException;
 use MySQLReplication\Exception\MySQLReplicationException;
 use MySQLReplication\Socket\SocketException;
 use PDOException;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 use Throwable;
 
 class StartCommand extends Command
@@ -85,7 +86,10 @@ class StartCommand extends Command
                                 $item = json_encode($item, JSON_THROW_ON_ERROR);
                             }
 
-                            return [ucfirst($key), $item];
+                            return [
+                                OutputFormatter::escape(ucfirst((string) $key)),
+                                OutputFormatter::escape((string) $item),
+                            ];
                         })
                 );
 
@@ -97,8 +101,8 @@ class StartCommand extends Command
                     $this->table(
                         ['Name', 'Value'],
                         [
-                            ['BinLogPosition', $binLogCurrent->getBinLogPosition()],
-                            ['BinFileName', $binLogCurrent->getBinFileName()],
+                            ['BinLogPosition', OutputFormatter::escape($binLogCurrent->getBinLogPosition())],
+                            ['BinFileName', OutputFormatter::escape($binLogCurrent->getBinFileName())],
                         ]
                     );
                 }
@@ -107,13 +111,13 @@ class StartCommand extends Command
                 $this->table(
                     ['Subscriber', 'Registered'],
                     collect($trigger->getSubscribers())
-                        ->transform(fn ($subscriber) => [$subscriber, '√'])
+                        ->transform(fn ($subscriber) => [OutputFormatter::escape((string) $subscriber), '√'])
                 );
             }
 
             $trigger->start($keepUp);
         } catch (MySQLReplicationException $e) {
-            $this->error($e->getMessage());
+            $this->error(OutputFormatter::escape($e->getMessage()));
 
             if (! $this->shouldRetryReplication($e)) {
                 throw $e;
@@ -128,7 +132,7 @@ class StartCommand extends Command
 
             goto start;
         } catch (DbalException|PDOException $e) {
-            $this->error($e->getMessage());
+            $this->error(OutputFormatter::escape($e->getMessage()));
 
             if (! $this->shouldRetry($e)) {
                 throw $e;
