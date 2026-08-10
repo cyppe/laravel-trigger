@@ -194,6 +194,44 @@ final class TriggerCheckpointTest extends TestCase
         self::assertSame('240', $this->safePosition($name));
     }
 
+    public function testLegacySerializedCheckpointRemainsReadable(): void
+    {
+        $current = new BinLogCurrent();
+        $current->setBinFileName('mysql-bin.000001');
+        $current->setBinLogPosition('4');
+
+        Cache::forever('triggers:legacy-serialized-checkpoint:replication', serialize($current));
+
+        $restored = $this->trigger('legacy-serialized-checkpoint', [])->getCurrent();
+
+        self::assertInstanceOf(BinLogCurrent::class, $restored);
+        self::assertSame('mysql-bin.000001', $restored->getBinFileName());
+        self::assertSame('4', $restored->getBinLogPosition());
+    }
+
+    public function testUnexpectedCheckpointClassesAreRejectedWithoutWakeupHooks(): void
+    {
+        $this->assertCheckpointClassIsRejectedWithoutHydration(CheckpointWakeupProbe::class);
+    }
+
+    public function testUnexpectedCheckpointClassesAreRejectedWithoutUnserializeHooks(): void
+    {
+        $this->assertCheckpointClassIsRejectedWithoutHydration(CheckpointUnserializeProbe::class);
+    }
+
+    public function testMalformedAndScalarCheckpointPayloadsRemainFailClosed(): void
+    {
+        foreach (['not-serialized', 'i:4;', 'a:1:{i:0;i:1;}', 'b:1;'] as $payload) {
+            $name = 'invalid-' . md5($payload);
+            $key = sprintf('triggers:%s:replication', $name);
+
+            Cache::forever($key, $payload);
+
+            self::assertNull($this->trigger($name, [])->getCurrent());
+            self::assertFalse(Cache::has($key));
+        }
+    }
+
     protected function defineEnvironment($app): void
     {
         $app['config']->set('cache.default', 'array');
@@ -216,6 +254,22 @@ final class TriggerCheckpointTest extends TestCase
             'checkpoint_interval' => 1,
             'checkpoint_ttl' => 86400,
         ], $overrides));
+    }
+
+    /**
+     * @param class-string<CheckpointUnserializeProbe|CheckpointWakeupProbe> $probeClass
+     */
+    private function assertCheckpointClassIsRejectedWithoutHydration(string $probeClass): void
+    {
+        $name = 'unexpected-' . md5($probeClass);
+        $key = sprintf('triggers:%s:replication', $name);
+        $probeClass::$hydrated = false;
+
+        Cache::forever($key, serialize(new $probeClass()));
+
+        self::assertNull($this->trigger($name, [])->getCurrent());
+        self::assertFalse($probeClass::$hydrated, $probeClass);
+        self::assertFalse(Cache::has($key));
     }
 
     private function safePosition(string $name): ?string
@@ -290,5 +344,28 @@ final class TriggerCheckpointTest extends TestCase
             0,
             new ColumnDTOCollection(),
         );
+    }
+}
+
+final class CheckpointWakeupProbe
+{
+    public static bool $hydrated = false;
+
+    public function __wakeup(): void
+    {
+        self::$hydrated = true;
+    }
+}
+
+final class CheckpointUnserializeProbe
+{
+    public static bool $hydrated = false;
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    public function __unserialize(array $data): void
+    {
+        self::$hydrated = true;
     }
 }

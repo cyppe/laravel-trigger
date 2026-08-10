@@ -435,11 +435,18 @@ class Trigger
         }
 
         try {
-            return unserialize($cache);
-        } catch (Throwable $e) {
+            $current = @unserialize($cache, ['allowed_classes' => [BinLogCurrent::class]]);
+        } catch (Throwable) {
+            $current = false;
+        }
+
+        if (! $current instanceof BinLogCurrent) {
             $this->clearCurrent();
+
             return null;
         }
+
+        return $current;
     }
 
     /**
