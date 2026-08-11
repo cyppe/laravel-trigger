@@ -16,6 +16,7 @@ use Huangdijia\Trigger\Facades\Trigger;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Arr;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 
 class ListCommand extends Command
 {
@@ -63,11 +64,11 @@ class ListCommand extends Command
             ->when($this->option('event'), fn ($collection, $event) => $collection->where('event', $event))
             ->unique('key')
             ->transform(fn ($item) => [
-                $item['database'],
-                $item['table'],
-                $item['event'],
-                $item['num'],
-                $item['action'],
+                OutputFormatter::escape((string) $item['database']),
+                OutputFormatter::escape((string) $item['table']),
+                OutputFormatter::escape((string) $item['event']),
+                OutputFormatter::escape((string) $item['num']),
+                OutputFormatter::escape((string) $item['action']),
             ])
             ->tap(function ($items) {
                 $this->table(['Database', 'Table', 'Event', 'Num', 'Action'], $items);
