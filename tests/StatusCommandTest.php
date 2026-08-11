@@ -15,6 +15,7 @@ use Huangdijia\Trigger\Manager;
 use Huangdijia\Trigger\Trigger;
 use Huangdijia\Trigger\TriggerServiceProvider;
 use Illuminate\Support\Facades\Artisan;
+use LogicException;
 use MySQLReplication\BinLog\BinLogCurrent;
 use Orchestra\Testbench\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -57,6 +58,21 @@ final class StatusCommandTest extends TestCase
         self::assertSame(0, $exitCode);
         self::assertStringContainsString('<fg=invalid>mysql-bin.000001', $display);
         self::assertStringContainsString('<fg=invalid>4</>\\', $display);
+    }
+
+    public function testUnreadableCheckpointFailureIsEscapedAndReturnsFailure(): void
+    {
+        $trigger = $this->createMock(Trigger::class);
+        $trigger->expects(self::once())
+            ->method('getCurrent')
+            ->willThrowException(new LogicException('<fg=invalid>checkpoint failure'));
+        $this->bindTrigger('default', $trigger);
+
+        $tester = $this->commandTester();
+        $exitCode = $tester->execute(['--replication' => 'default']);
+
+        self::assertSame(1, $exitCode);
+        self::assertStringContainsString('<fg=invalid>checkpoint failure', $tester->getDisplay());
     }
 
     /**

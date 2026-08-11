@@ -13,6 +13,7 @@ namespace Huangdijia\Trigger\Console;
 
 use Huangdijia\Trigger\Facades\Trigger;
 use Illuminate\Console\Command;
+use LogicException;
 use Symfony\Component\Console\Formatter\OutputFormatter;
 
 class StatusCommand extends Command
@@ -29,15 +30,23 @@ class StatusCommand extends Command
      */
     protected $description = 'Install config and routes.';
 
-    public function handle()
+    public function handle(): int
     {
         $replication = $this->option('replication');
         $trigger = Trigger::replication($replication);
-        $binLogCurrent = $trigger->getCurrent();
+
+        try {
+            $binLogCurrent = $trigger->getCurrent();
+        } catch (LogicException $exception) {
+            $this->error(OutputFormatter::escape($exception->getMessage()));
+
+            return self::FAILURE;
+        }
 
         if (is_null($binLogCurrent)) {
             $this->warn('binlog info of ' . OutputFormatter::escape((string) $replication) . ' is empty.');
-            return;
+
+            return self::SUCCESS;
         }
 
         $this->table(
@@ -49,5 +58,7 @@ class StatusCommand extends Command
                 // ['MariaDbGtid', $binLogCurrent->getMariaDbGtid()],
             ]
         );
+
+        return self::SUCCESS;
     }
 }

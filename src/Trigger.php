@@ -430,20 +430,31 @@ class Trigger
             ? $this->safeReplicationCacheKey
             : $this->replicationCacheKey;
 
-        if (! $cache = $this->cache->get($cacheKey)) {
+        $cache = $this->cache->get($cacheKey);
+
+        if ($cache === null) {
             return null;
         }
 
-        try {
-            $current = @unserialize($cache, ['allowed_classes' => [BinLogCurrent::class]]);
-        } catch (Throwable) {
-            $current = false;
+        $current = false;
+
+        if (is_string($cache)) {
+            try {
+                $current = @unserialize($cache, ['allowed_classes' => [BinLogCurrent::class]]);
+            } catch (Throwable) {
+                $current = false;
+            }
         }
 
         if (! $current instanceof BinLogCurrent) {
-            $this->clearCurrent();
+            $checkpointRole = $this->checkpointMode === self::CHECKPOINT_MODE_SAFE ? 'safe' : 'legacy';
 
-            return null;
+            throw new LogicException(sprintf(
+                "The %s checkpoint for replication '%s' (cache key '%s') is unreadable; refusing to resume from an unknown position. Inspect the key, then seed a trusted position or explicitly reset the listener.",
+                $checkpointRole,
+                $this->name,
+                $cacheKey,
+            ));
         }
 
         return $current;

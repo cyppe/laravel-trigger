@@ -78,6 +78,25 @@ final class StartCommandTest extends TestCase
         self::assertStringContainsString('<fg=invalid>Subscriber</>', $display);
     }
 
+    public function testVerboseResetDoesNotReadTheCheckpointItIsReplacing(): void
+    {
+        $trigger = $this->createMock(Trigger::class);
+        $trigger->expects(self::once())->method('getConfig')->willReturn([]);
+        $trigger->expects(self::never())->method('getCurrent');
+        $trigger->expects(self::once())->method('getSubscribers')->willReturn([]);
+        $trigger->expects(self::once())->method('start')->with(false);
+        $this->bindTrigger($trigger);
+
+        $tester = $this->commandTester('trigger:start');
+        $exitCode = $tester->execute([
+            '--replication' => 'default',
+            '--reset' => true,
+            '-vvv' => true,
+        ]);
+
+        self::assertSame(0, $exitCode);
+    }
+
     public function testNonRetryableReplicationErrorsRemainTheTerminalExceptionAfterSafeRendering(): void
     {
         $expected = new MySQLReplicationException('<fg=invalid>parser failed</>\\');

@@ -47,6 +47,14 @@ final class TriggerCheckpointTest extends TestCase
         self::assertSame('120', $trigger->getCurrent()?->getBinLogPosition());
     }
 
+    public function testAbsentLegacyCheckpointStillStartsFromTheStreamHead(): void
+    {
+        $trigger = $this->trigger('absent-legacy-cursor', []);
+
+        self::assertNull($trigger->getCurrent());
+        self::assertSame('', $trigger->configure()->binLogFileName);
+    }
+
     public function testShadowModeNeverPromotesATableMapOrRowPositionToTheSafeCursor(): void
     {
         $name = 'forced-mid-transaction-resume';
@@ -219,17 +227,89 @@ final class TriggerCheckpointTest extends TestCase
         $this->assertCheckpointClassIsRejectedWithoutHydration(CheckpointUnserializeProbe::class);
     }
 
+    public function testCorruptSafeCursorFailsClosedWithoutDeletingEitherCheckpoint(): void
+    {
+        $name = 'corrupt-safe-cursor';
+        $legacyKey = sprintf('triggers:%s:replication', $name);
+        $safeKey = $legacyKey . ':safe';
+        $legacy = new BinLogCurrent();
+        $legacy->setBinFileName('mysql-bin.000001');
+        $legacy->setBinLogPosition('4');
+        $payload = '<fg=invalid>SECRET-SAFE-PAYLOAD';
+
+        Cache::forever($legacyKey, serialize($legacy));
+        Cache::forever($safeKey, $payload);
+
+        $trigger = $this->trigger($name, ['checkpoint_mode' => 'safe']);
+        $first = $this->configureException($trigger);
+
+        self::assertStringContainsString('safe checkpoint', $first->getMessage());
+        self::assertStringContainsString($name, $first->getMessage());
+        self::assertStringContainsString($safeKey, $first->getMessage());
+        self::assertStringNotContainsString('SECRET-SAFE-PAYLOAD', $first->getMessage());
+        self::assertSame($payload, Cache::get($safeKey));
+        self::assertSame('4', unserialize((string) Cache::get($legacyKey))->getBinLogPosition());
+        self::assertSame($first->getMessage(), $this->configureException($trigger)->getMessage());
+    }
+
+    public function testCorruptLegacyCursorFailsClosedWithoutDeletingTheSafeCheckpoint(): void
+    {
+        $name = 'corrupt-shadow-legacy-cursor';
+        $legacyKey = sprintf('triggers:%s:replication', $name);
+        $safeKey = $legacyKey . ':safe';
+        $safe = new BinLogCurrent();
+        $safe->setBinFileName('mysql-bin.000001');
+        $safe->setBinLogPosition('4');
+
+        Cache::forever($legacyKey, 'not-serialized');
+        Cache::forever($safeKey, serialize($safe));
+
+        $exception = $this->configureException($this->trigger($name, ['checkpoint_mode' => 'shadow']));
+
+        self::assertStringContainsString('legacy checkpoint', $exception->getMessage());
+        self::assertSame('not-serialized', Cache::get($legacyKey));
+        self::assertSame('4', unserialize((string) Cache::get($safeKey))->getBinLogPosition());
+    }
+
+    public function testLegacyModeFailsClosedOnACorruptCheckpoint(): void
+    {
+        $name = 'corrupt-legacy-cursor';
+        $key = sprintf('triggers:%s:replication', $name);
+        Cache::forever($key, 'not-serialized');
+
+        $exception = $this->configureException($this->trigger($name, ['checkpoint_mode' => 'legacy']));
+
+        self::assertStringContainsString('legacy checkpoint', $exception->getMessage());
+        self::assertSame('not-serialized', Cache::get($key));
+    }
+
     public function testMalformedAndScalarCheckpointPayloadsRemainFailClosed(): void
     {
-        foreach (['not-serialized', 'i:4;', 'a:1:{i:0;i:1;}', 'b:1;'] as $payload) {
-            $name = 'invalid-' . md5($payload);
+        foreach (['not-serialized', 'i:4;', 'a:1:{i:0;i:1;}', 'b:1;', 'N;', '', '0', 0, false] as $payload) {
+            $name = 'invalid-' . md5(serialize($payload));
             $key = sprintf('triggers:%s:replication', $name);
 
             Cache::forever($key, $payload);
 
-            self::assertNull($this->trigger($name, [])->getCurrent());
-            self::assertFalse(Cache::has($key));
+            $exception = $this->currentException($this->trigger($name, []));
+
+            self::assertStringContainsString('legacy checkpoint', $exception->getMessage());
+            self::assertSame($payload, Cache::get($key));
         }
+    }
+
+    public function testExplicitClearCurrentStillDeletesBothCheckpoints(): void
+    {
+        $name = 'explicit-clear';
+        $legacyKey = sprintf('triggers:%s:replication', $name);
+        $safeKey = $legacyKey . ':safe';
+        Cache::forever($legacyKey, 'legacy');
+        Cache::forever($safeKey, 'safe');
+
+        $this->trigger($name, [])->clearCurrent();
+
+        self::assertFalse(Cache::has($legacyKey));
+        self::assertFalse(Cache::has($safeKey));
     }
 
     protected function defineEnvironment($app): void
@@ -267,9 +347,31 @@ final class TriggerCheckpointTest extends TestCase
 
         Cache::forever($key, serialize(new $probeClass()));
 
-        self::assertNull($this->trigger($name, [])->getCurrent());
+        $this->currentException($this->trigger($name, []));
         self::assertFalse($probeClass::$hydrated, $probeClass);
-        self::assertFalse(Cache::has($key));
+        self::assertSame(serialize(new $probeClass()), Cache::get($key));
+    }
+
+    private function configureException(\Huangdijia\Trigger\Trigger $trigger): LogicException
+    {
+        try {
+            $trigger->configure();
+        } catch (LogicException $exception) {
+            return $exception;
+        }
+
+        self::fail('Expected checkpoint configuration to fail closed.');
+    }
+
+    private function currentException(\Huangdijia\Trigger\Trigger $trigger): LogicException
+    {
+        try {
+            $trigger->getCurrent();
+        } catch (LogicException $exception) {
+            return $exception;
+        }
+
+        self::fail('Expected checkpoint decoding to fail closed.');
     }
 
     private function safePosition(string $name): ?string
