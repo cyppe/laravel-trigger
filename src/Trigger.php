@@ -20,6 +20,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use LogicException;
 use MySQLReplication\BinLog\BinLogCurrent;
@@ -33,6 +34,7 @@ use MySQLReplication\Event\DTO\XidDTO;
 use MySQLReplication\Event\EventInfo;
 use MySQLReplication\Event\EventObserverInterface;
 use MySQLReplication\MySQLReplicationFactory;
+use Psr\Log\LoggerInterface;
 use ReflectionException;
 use ReflectionMethod;
 use Throwable;
@@ -200,6 +202,19 @@ class Trigger
                 $builder->withUseTableMapMetadata((bool) $this->getConfig('use_table_map_metadata', false));
             }
 
+            if ((bool) $this->getConfig('require_table_map_metadata', false)) {
+                if (! (bool) $this->getConfig('use_table_map_metadata', false)) {
+                    throw new LogicException('require_table_map_metadata needs use_table_map_metadata enabled');
+                }
+
+                // @phpstan-ignore function.alreadyNarrowedType (compatibility with php-mysql-replication without requireTableMapMetadata)
+                if (! method_exists($builder, 'withRequireTableMapMetadata')) {
+                    throw new LogicException('require_table_map_metadata needs a php-mysql-replication version with requireTableMapMetadata support');
+                }
+
+                $builder->withRequireTableMapMetadata(true);
+            }
+
             if ($this->checkpointMode !== self::CHECKPOINT_MODE_LEGACY && ! interface_exists(EventObserverInterface::class)) {
                 $eventsOnly = $this->integerListConfig('events_only');
                 $xidFiltered = in_array(ConstEventType::XID_EVENT->value, $this->integerListConfig('events_ignore'), true)
@@ -250,9 +265,10 @@ class Trigger
     public function start(bool $keepUp = true): void
     {
         $config = $this->configure($keepUp);
+        $logger = $this->replicationLogger();
         $binLogStream = interface_exists(EventObserverInterface::class)
-            ? new MySQLReplicationFactory($config, eventObserver: new ProcessedEventObserver($this))
-            : new MySQLReplicationFactory($config);
+            ? new MySQLReplicationFactory($config, logger: $logger, eventObserver: new ProcessedEventObserver($this))
+            : new MySQLReplicationFactory($config, logger: $logger);
 
         $this->dbConnection = $binLogStream->getDbConnection();
         $this->applySessionVariables($this->dbConnection);
@@ -652,6 +668,22 @@ class Trigger
         return $tables;
     }
 
+    /**
+     * The log channel for php-mysql-replication's own warnings (metadata
+     * fallback, information_schema drift, date parse failures). Without one
+     * the library logs to a NullLogger.
+     */
+    protected function replicationLogger(): ?LoggerInterface
+    {
+        $channel = $this->getConfig('log_channel');
+
+        if (! is_string($channel) || trim($channel) === '') {
+            return null;
+        }
+
+        return Log::channel(trim($channel));
+    }
+
     protected function validateSourceConfiguration(?Connection $connection): void
     {
         if ($connection === null) {
@@ -679,6 +711,18 @@ class Trigger
 
             if ($rowValueOptions !== '') {
                 throw new LogicException("Partial JSON binlog updates are not supported; got '{$rowValueOptions}'");
+            }
+        }
+
+        if ((bool) $this->getConfig('reject_minimal_row_metadata', false)) {
+            try {
+                $rowMetadata = strtoupper((string) $connection->fetchOne('SELECT @@GLOBAL.binlog_row_metadata'));
+            } catch (Throwable $exception) {
+                throw new LogicException('Cannot verify binlog_row_metadata=FULL on the replication source: ' . $exception->getMessage(), 0, $exception);
+            }
+
+            if ($rowMetadata !== 'FULL') {
+                throw new LogicException("The replication source must use binlog_row_metadata=FULL; got '{$rowMetadata}'");
             }
         }
     }

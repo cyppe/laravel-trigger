@@ -53,6 +53,13 @@ class StartCommand extends Command
 
         $trigger = Trigger::replication($replication);
 
+        // A reset discards the old cursor up front, like the runtime reset
+        // signal. Retries then resume from what this run checkpointed instead
+        // of starting again at the source head and silently skipping events.
+        if (! $keepUp) {
+            $trigger->clearCurrent();
+        }
+
         start:
         try {
             if ($this->option('verbose')) {
@@ -128,6 +135,7 @@ class StartCommand extends Command
             // fail closed and require an explicit operator decision; clearing a
             // cursor here would silently restart at the current source head.
             $this->info('Retry now');
+            $keepUp = true;
             sleep(1);
 
             goto start;
@@ -140,6 +148,7 @@ class StartCommand extends Command
 
             // Keep current binlog position so we can resume after reconnect.
             $this->info('Retry now');
+            $keepUp = true;
             sleep(1);
 
             goto start;

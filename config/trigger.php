@@ -36,13 +36,23 @@ return [
             // v11 can resolve names from FULL TABLE_MAP metadata and otherwise
             // falls back to information_schema. Default off for a safe rollout.
             'use_table_map_metadata' => (bool) env('TRIGGER_USE_TABLE_MAP_METADATA', false),
+            // Fail closed instead of falling back to information_schema when a
+            // TABLE_MAP event lacks column names (source not on binlog_row_metadata=FULL).
+            // Needs use_table_map_metadata and a php-mysql-replication with requireTableMapMetadata.
+            'require_table_map_metadata' => (bool) env('TRIGGER_REQUIRE_TABLE_MAP_METADATA', false),
 
             // Optional fail-closed source safety gates.
             'require_full_row_image' => (bool) env('TRIGGER_REQUIRE_FULL_ROW_IMAGE', false),
             'reject_transaction_compression' => (bool) env('TRIGGER_REJECT_TRANSACTION_COMPRESSION', false),
             'reject_partial_json_updates' => (bool) env('TRIGGER_REJECT_PARTIAL_JSON_UPDATES', false),
+            'reject_minimal_row_metadata' => (bool) env('TRIGGER_REJECT_MINIMAL_ROW_METADATA', false),
             // Stop on v11 event types whose mutation payload is not decoded.
             'reject_unsupported_mutation_events' => (bool) env('TRIGGER_REJECT_UNSUPPORTED_MUTATION_EVENTS', false),
+
+            // Laravel log channel for php-mysql-replication's own warnings. The
+            // library also logs per-event debug lines, so give the channel a
+            // level of warning or higher. Null keeps the library silent.
+            'log_channel' => env('TRIGGER_LOG_CHANNEL'),
 
             'heartbeat' => (int) env('TRIGGER_HEARTBEAT', 3),
 
