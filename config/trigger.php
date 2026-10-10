@@ -49,6 +49,11 @@ return [
             // Stop on v11 event types whose mutation payload is not decoded.
             'reject_unsupported_mutation_events' => (bool) env('TRIGGER_REJECT_UNSUPPORTED_MUTATION_EVENTS', false),
 
+            // Laravel log channel for php-mysql-replication's own warnings. The
+            // library also logs per-event debug lines, so give the channel a
+            // level of warning or higher. Null keeps the library silent.
+            'log_channel' => env('TRIGGER_LOG_CHANNEL'),
+
             'heartbeat' => (int) env('TRIGGER_HEARTBEAT', 3),
 
             // Periodically ping the MySQL metadata connection to avoid server-side idle disconnects.

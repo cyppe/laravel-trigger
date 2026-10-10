@@ -384,9 +384,32 @@ final class TriggerIngestionFeaturesTest extends TestCase
         $this->trigger('require-without-use', ['require_table_map_metadata' => true])->configure(false);
     }
 
+    public function testReplicationLoggerIsOptIn(): void
+    {
+        self::assertNull($this->validatingTrigger([])->logger());
+        self::assertNull($this->validatingTrigger(['log_channel' => ' '])->logger());
+
+        $logger = $this->validatingTrigger(['log_channel' => 'trigger-test'])->logger();
+
+        self::assertInstanceOf(\Psr\Log\LoggerInterface::class, $logger);
+
+        $logger->warning('information_schema drift');
+        $logger->debug('per-event noise');
+
+        $handler = $logger->getLogger()->getHandlers()[0];
+        self::assertInstanceOf(\Monolog\Handler\TestHandler::class, $handler);
+        self::assertTrue($handler->hasWarningThatContains('information_schema drift'));
+        self::assertFalse($handler->hasDebugRecords());
+    }
+
     protected function defineEnvironment($app): void
     {
         $app['config']->set('cache.default', 'array');
+        $app['config']->set('logging.channels.trigger-test', [
+            'driver' => 'monolog',
+            'handler' => \Monolog\Handler\TestHandler::class,
+            'level' => 'warning',
+        ]);
     }
 
     /**
@@ -470,6 +493,11 @@ final class TriggerSourceValidator extends Trigger
     public function validate(Connection $connection): void
     {
         $this->validateSourceConfiguration($connection);
+    }
+
+    public function logger(): ?\Psr\Log\LoggerInterface
+    {
+        return $this->replicationLogger();
     }
 
     public function useCache(CacheRepository $cache): void

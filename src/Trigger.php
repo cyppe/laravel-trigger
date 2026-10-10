@@ -20,6 +20,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use LogicException;
 use MySQLReplication\BinLog\BinLogCurrent;
@@ -33,6 +34,7 @@ use MySQLReplication\Event\DTO\XidDTO;
 use MySQLReplication\Event\EventInfo;
 use MySQLReplication\Event\EventObserverInterface;
 use MySQLReplication\MySQLReplicationFactory;
+use Psr\Log\LoggerInterface;
 use ReflectionException;
 use ReflectionMethod;
 use Throwable;
@@ -263,9 +265,10 @@ class Trigger
     public function start(bool $keepUp = true): void
     {
         $config = $this->configure($keepUp);
+        $logger = $this->replicationLogger();
         $binLogStream = interface_exists(EventObserverInterface::class)
-            ? new MySQLReplicationFactory($config, eventObserver: new ProcessedEventObserver($this))
-            : new MySQLReplicationFactory($config);
+            ? new MySQLReplicationFactory($config, logger: $logger, eventObserver: new ProcessedEventObserver($this))
+            : new MySQLReplicationFactory($config, logger: $logger);
 
         $this->dbConnection = $binLogStream->getDbConnection();
         $this->applySessionVariables($this->dbConnection);
@@ -663,6 +666,22 @@ class Trigger
         });
 
         return $tables;
+    }
+
+    /**
+     * The log channel for php-mysql-replication's own warnings (metadata
+     * fallback, information_schema drift, date parse failures). Without one
+     * the library logs to a NullLogger.
+     */
+    protected function replicationLogger(): ?LoggerInterface
+    {
+        $channel = $this->getConfig('log_channel');
+
+        if (! is_string($channel) || trim($channel) === '') {
+            return null;
+        }
+
+        return Log::channel(trim($channel));
     }
 
     protected function validateSourceConfiguration(?Connection $connection): void
