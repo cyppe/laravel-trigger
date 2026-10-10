@@ -200,6 +200,19 @@ class Trigger
                 $builder->withUseTableMapMetadata((bool) $this->getConfig('use_table_map_metadata', false));
             }
 
+            if ((bool) $this->getConfig('require_table_map_metadata', false)) {
+                if (! (bool) $this->getConfig('use_table_map_metadata', false)) {
+                    throw new LogicException('require_table_map_metadata needs use_table_map_metadata enabled');
+                }
+
+                // @phpstan-ignore function.alreadyNarrowedType (compatibility with php-mysql-replication without requireTableMapMetadata)
+                if (! method_exists($builder, 'withRequireTableMapMetadata')) {
+                    throw new LogicException('require_table_map_metadata needs a php-mysql-replication version with requireTableMapMetadata support');
+                }
+
+                $builder->withRequireTableMapMetadata(true);
+            }
+
             if ($this->checkpointMode !== self::CHECKPOINT_MODE_LEGACY && ! interface_exists(EventObserverInterface::class)) {
                 $eventsOnly = $this->integerListConfig('events_only');
                 $xidFiltered = in_array(ConstEventType::XID_EVENT->value, $this->integerListConfig('events_ignore'), true)
@@ -679,6 +692,18 @@ class Trigger
 
             if ($rowValueOptions !== '') {
                 throw new LogicException("Partial JSON binlog updates are not supported; got '{$rowValueOptions}'");
+            }
+        }
+
+        if ((bool) $this->getConfig('reject_minimal_row_metadata', false)) {
+            try {
+                $rowMetadata = strtoupper((string) $connection->fetchOne('SELECT @@GLOBAL.binlog_row_metadata'));
+            } catch (Throwable $exception) {
+                throw new LogicException('Cannot verify binlog_row_metadata=FULL on the replication source: ' . $exception->getMessage(), 0, $exception);
+            }
+
+            if ($rowMetadata !== 'FULL') {
+                throw new LogicException("The replication source must use binlog_row_metadata=FULL; got '{$rowMetadata}'");
             }
         }
     }

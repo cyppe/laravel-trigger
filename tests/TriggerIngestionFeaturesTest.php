@@ -23,6 +23,7 @@ use MySQLReplication\Definitions\ConstEventType;
 use MySQLReplication\Event\DTO\EventDTO;
 use MySQLReplication\Event\EventInfo;
 use Orchestra\Testbench\TestCase;
+use RuntimeException;
 
 /**
  * @internal
@@ -316,6 +317,71 @@ final class TriggerIngestionFeaturesTest extends TestCase
         $this->expectExceptionMessage('Partial JSON binlog updates are not supported');
 
         $this->validatingTrigger(['reject_partial_json_updates' => true])->validate($connection);
+    }
+
+    public function testMinimalRowMetadataFailsClosed(): void
+    {
+        $connection = $this->createMock(Connection::class);
+        $connection->expects(self::once())
+            ->method('fetchOne')
+            ->with('SELECT @@GLOBAL.binlog_row_metadata')
+            ->willReturn('minimal');
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage("binlog_row_metadata=FULL; got 'MINIMAL'");
+
+        $this->validatingTrigger(['reject_minimal_row_metadata' => true])->validate($connection);
+    }
+
+    public function testFullRowMetadataPassesTheMetadataGate(): void
+    {
+        $connection = $this->createMock(Connection::class);
+        $connection->expects(self::once())
+            ->method('fetchOne')
+            ->with('SELECT @@GLOBAL.binlog_row_metadata')
+            ->willReturn('FULL');
+
+        $this->validatingTrigger(['reject_minimal_row_metadata' => true])->validate($connection);
+
+        self::assertTrue(true);
+    }
+
+    public function testSourceWithoutRowMetadataVariableFailsClosed(): void
+    {
+        $connection = $this->createMock(Connection::class);
+        $connection->expects(self::once())
+            ->method('fetchOne')
+            ->with('SELECT @@GLOBAL.binlog_row_metadata')
+            ->willThrowException(new RuntimeException("Unknown system variable 'binlog_row_metadata'"));
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage("Cannot verify binlog_row_metadata=FULL on the replication source: Unknown system variable 'binlog_row_metadata'");
+
+        $this->validatingTrigger(['reject_minimal_row_metadata' => true])->validate($connection);
+    }
+
+    public function testRequiredTableMapMetadataIsMappedToTheReplicationConfig(): void
+    {
+        if (! method_exists(\MySQLReplication\Config\ConfigBuilder::class, 'withRequireTableMapMetadata')) {
+            self::markTestSkipped('php-mysql-replication without requireTableMapMetadata');
+        }
+
+        $config = $this->trigger('require-metadata', [
+            'use_table_map_metadata' => true,
+            'require_table_map_metadata' => true,
+        ])->configure(false);
+
+        self::assertTrue($config->useTableMapMetadata);
+        self::assertTrue($config->requireTableMapMetadata);
+        self::assertFalse($this->trigger('require-metadata-default', ['use_table_map_metadata' => true])->configure(false)->requireTableMapMetadata);
+    }
+
+    public function testRequiredTableMapMetadataNeedsTheMetadataSwitch(): void
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('require_table_map_metadata needs use_table_map_metadata enabled');
+
+        $this->trigger('require-without-use', ['require_table_map_metadata' => true])->configure(false);
     }
 
     protected function defineEnvironment($app): void
