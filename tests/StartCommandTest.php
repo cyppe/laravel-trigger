@@ -155,6 +155,41 @@ final class StartCommandTest extends TestCase
         self::assertStringContainsString('Retry now', $tester->getDisplay());
     }
 
+    public function testResetClearsTheOldCursorAndRetriesResumeFromThisRunsCheckpoint(): void
+    {
+        $trigger = $this->createMock(Trigger::class);
+        $trigger->expects(self::once())->method('clearCurrent');
+        $starts = [];
+        $trigger->expects(self::exactly(2))
+            ->method('start')
+            ->willReturnCallback(static function (bool $keepUp) use (&$starts): void {
+                $starts[] = $keepUp;
+
+                if (count($starts) === 1) {
+                    throw new SocketException('connection reset', 104);
+                }
+            });
+        $this->bindTrigger($trigger);
+
+        $tester = $this->commandTester('trigger:start');
+        $exitCode = $tester->execute(['--replication' => 'default', '--reset' => true]);
+
+        self::assertSame(0, $exitCode);
+        self::assertSame([false, true], $starts);
+    }
+
+    public function testStartWithoutResetNeverClearsTheCursor(): void
+    {
+        $trigger = $this->createMock(Trigger::class);
+        $trigger->expects(self::never())->method('clearCurrent');
+        $trigger->expects(self::once())->method('start')->with(true);
+        $this->bindTrigger($trigger);
+
+        $exitCode = $this->commandTester('trigger:start')->execute(['--replication' => 'default']);
+
+        self::assertSame(0, $exitCode);
+    }
+
     /**
      * @param mixed $app
      * @return array<int, class-string>
