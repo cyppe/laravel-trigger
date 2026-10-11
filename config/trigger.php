@@ -46,6 +46,13 @@ return [
 
             'heartbeat' => (int) env('TRIGGER_HEARTBEAT', 3),
 
+            // Seconds a binlog read may wait for data before the connection is
+            // treated as dead and StartCommand reconnects from the checkpoint.
+            // 0 waits forever (previous behavior); otherwise at least three
+            // heartbeat periods, because a live source sends a heartbeat every
+            // period while the binlog is quiet.
+            'read_timeout' => (float) env('TRIGGER_READ_TIMEOUT', 0),
+
             // Periodically ping the MySQL metadata connection to avoid server-side idle disconnects.
             // Set to 0 to disable.
             'keepalive' => (int) env('TRIGGER_KEEPALIVE', 0),

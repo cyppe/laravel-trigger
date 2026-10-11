@@ -22,7 +22,10 @@ use MySQLReplication\BinLog\BinLogCurrent;
 use MySQLReplication\Definitions\ConstEventType;
 use MySQLReplication\Event\DTO\EventDTO;
 use MySQLReplication\Event\EventInfo;
+use MySQLReplication\Socket\Socket;
 use Orchestra\Testbench\TestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
+use ReflectionProperty;
 
 /**
  * @internal
@@ -59,6 +62,45 @@ final class TriggerIngestionFeaturesTest extends TestCase
             self::assertTrue($config->useTableMapMetadata);
             self::assertTrue($config->checkTablesIgnore('audit'));
         }
+    }
+
+    public function testReadTimeoutIsOffByDefault(): void
+    {
+        self::assertSame(0.0, $this->socketTimeout($this->trigger('read-timeout-default')->replicationSocket()));
+    }
+
+    public function testReadTimeoutIsPassedToTheBinlogSocket(): void
+    {
+        $socket = $this->trigger('read-timeout', ['read_timeout' => '30', 'heartbeat' => 3])->replicationSocket();
+
+        self::assertSame(30.0, $this->socketTimeout($socket));
+    }
+
+    public function testReadTimeoutAcceptsExactlyThreeHeartbeatPeriods(): void
+    {
+        $socket = $this->trigger('read-timeout-floor', ['read_timeout' => 9, 'heartbeat' => 0])->replicationSocket();
+
+        self::assertSame(9.0, $this->socketTimeout($socket));
+    }
+
+    #[DataProvider('unsafeReadTimeouts')]
+    public function testReadTimeoutThatCouldFireOnAQuietLiveStreamFailsClosed(mixed $timeout, int $heartbeat): void
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage("Replication 'read-timeout-unsafe': read_timeout must be 0 (off) or at least three heartbeat periods");
+
+        $this->trigger('read-timeout-unsafe', ['read_timeout' => $timeout, 'heartbeat' => $heartbeat])->replicationSocket();
+    }
+
+    /**
+     * @return iterable<string, array{0: mixed, 1: int}>
+     */
+    public static function unsafeReadTimeouts(): iterable
+    {
+        yield 'shorter than three heartbeats' => [8.9, 3];
+        yield 'shorter than three of a longer heartbeat' => [29, 10];
+        yield 'shorter than three of the default heartbeat' => [8, 0];
+        yield 'negative' => [-1, 3];
     }
 
     public function testNewBehaviorChangingOptionsDefaultOff(): void
@@ -321,6 +363,11 @@ final class TriggerIngestionFeaturesTest extends TestCase
     protected function defineEnvironment($app): void
     {
         $app['config']->set('cache.default', 'array');
+    }
+
+    private function socketTimeout(Socket $socket): float
+    {
+        return (new ReflectionProperty(Socket::class, 'timeoutSeconds'))->getValue($socket);
     }
 
     /**

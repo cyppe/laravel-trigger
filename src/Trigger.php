@@ -33,6 +33,7 @@ use MySQLReplication\Event\DTO\XidDTO;
 use MySQLReplication\Event\EventInfo;
 use MySQLReplication\Event\EventObserverInterface;
 use MySQLReplication\MySQLReplicationFactory;
+use MySQLReplication\Socket\Socket;
 use ReflectionException;
 use ReflectionMethod;
 use Throwable;
@@ -229,6 +230,43 @@ class Trigger
     }
 
     /**
+     * The binlog socket, with the configured read timeout.
+     *
+     * Without a timeout a connection that silently stops delivering (no FIN or
+     * RST) blocks the read forever, and StartCommand's retry never runs. The
+     * source sends a heartbeat whenever the binlog is quiet for one heartbeat
+     * period, so a live stream is never silent for several periods: a timeout
+     * of at least three periods only fires on a dead connection. The timeout
+     * raises a SocketException, which StartCommand retries from the last
+     * persisted checkpoint.
+     */
+    public function replicationSocket(): Socket
+    {
+        $timeout = (float) $this->getConfig('read_timeout', 0);
+
+        if ($timeout === 0.0) {
+            return new Socket();
+        }
+
+        $heartbeat = (float) ($this->getConfig('heartbeat') ?: 3);
+
+        if ($timeout < 3 * $heartbeat) {
+            throw new LogicException(sprintf(
+                "Replication '%s': read_timeout must be 0 (off) or at least three heartbeat periods (%s s), got %s s",
+                $this->name,
+                3 * $heartbeat,
+                $timeout,
+            ));
+        }
+
+        if (! method_exists(Socket::class, '__construct')) {
+            throw new LogicException('read_timeout requires php-mysql-replication with socket timeouts');
+        }
+
+        return new Socket($timeout);
+    }
+
+    /**
      * Load routes of trigger.
      */
     public function loadRoutes(): void
@@ -250,9 +288,10 @@ class Trigger
     public function start(bool $keepUp = true): void
     {
         $config = $this->configure($keepUp);
+        $socket = $this->replicationSocket();
         $binLogStream = interface_exists(EventObserverInterface::class)
-            ? new MySQLReplicationFactory($config, eventObserver: new ProcessedEventObserver($this))
-            : new MySQLReplicationFactory($config);
+            ? new MySQLReplicationFactory($config, socket: $socket, eventObserver: new ProcessedEventObserver($this))
+            : new MySQLReplicationFactory($config, socket: $socket);
 
         $this->dbConnection = $binLogStream->getDbConnection();
         $this->applySessionVariables($this->dbConnection);
