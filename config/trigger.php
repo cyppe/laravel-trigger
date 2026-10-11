@@ -50,8 +50,10 @@ return [
             // treated as dead and StartCommand reconnects from the checkpoint.
             // 0 waits forever (previous behavior); otherwise at least three
             // heartbeat periods, because a live source sends a heartbeat every
-            // period while the binlog is quiet.
-            'read_timeout' => (float) env('TRIGGER_READ_TIMEOUT', 0),
+            // period while the binlog is quiet. Kept uncast so the trigger can
+            // refuse a value that is not a number; a cast would turn a typo into 0
+            // (off).
+            'read_timeout' => env('TRIGGER_READ_TIMEOUT', 0),
 
             // Periodically ping the MySQL metadata connection to avoid server-side idle disconnects.
             // Set to 0 to disable.

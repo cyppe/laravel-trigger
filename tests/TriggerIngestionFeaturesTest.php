@@ -83,6 +83,22 @@ final class TriggerIngestionFeaturesTest extends TestCase
         self::assertSame(9.0, $this->socketTimeout($socket));
     }
 
+    public function testReadTimeoutFromTheEnvironmentReachesTheSocket(): void
+    {
+        $socket = $this->triggerFromConfigFile('read-timeout-env', '30')->replicationSocket();
+
+        self::assertSame(30.0, $this->socketTimeout($socket));
+    }
+
+    public function testReadTimeoutFromTheEnvironmentThatIsNotANumberFailsClosed(): void
+    {
+        // The config file must not cast the value: (float) 'thirty' is 0, which would turn the timeout off.
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage("Replication 'read-timeout-env-invalid': read_timeout must be a number of seconds, got 'thirty'");
+
+        $this->triggerFromConfigFile('read-timeout-env-invalid', 'thirty')->replicationSocket();
+    }
+
     #[DataProvider('unsafeReadTimeouts')]
     public function testReadTimeoutThatCouldFireOnAQuietLiveStreamFailsClosed(mixed $timeout, int $heartbeat): void
     {
@@ -388,6 +404,23 @@ final class TriggerIngestionFeaturesTest extends TestCase
     private function socketTimeout(Socket $socket): float
     {
         return (new ReflectionProperty(Socket::class, 'timeoutSeconds'))->getValue($socket);
+    }
+
+    /**
+     * Builds the trigger from the package's config file with TRIGGER_READ_TIMEOUT set, so the test covers what
+     * the file does to the environment value.
+     */
+    private function triggerFromConfigFile(string $name, string $readTimeout): Trigger
+    {
+        $_SERVER['TRIGGER_READ_TIMEOUT'] = $_ENV['TRIGGER_READ_TIMEOUT'] = $readTimeout;
+
+        try {
+            $config = (require __DIR__ . '/../config/trigger.php')['replications']['default'];
+        } finally {
+            unset($_SERVER['TRIGGER_READ_TIMEOUT'], $_ENV['TRIGGER_READ_TIMEOUT']);
+        }
+
+        return new Trigger($name, array_replace($config, ['heartbeat' => 3]));
     }
 
     /**
