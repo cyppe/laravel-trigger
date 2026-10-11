@@ -103,6 +103,26 @@ final class TriggerIngestionFeaturesTest extends TestCase
         yield 'negative' => [-1, 3];
     }
 
+    #[DataProvider('nonNumericReadTimeouts')]
+    public function testReadTimeoutThatIsNotAFiniteNumberFailsClosed(mixed $timeout): void
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage("Replication 'read-timeout-invalid': read_timeout must be a number of seconds");
+
+        $this->trigger('read-timeout-invalid', ['read_timeout' => $timeout])->replicationSocket();
+    }
+
+    /**
+     * @return iterable<string, array{0: mixed}>
+     */
+    public static function nonNumericReadTimeouts(): iterable
+    {
+        yield 'text' => ['thirty'];
+        yield 'not a number' => [NAN];
+        yield 'infinite' => [INF];
+        yield 'list' => [[30]];
+    }
+
     public function testNewBehaviorChangingOptionsDefaultOff(): void
     {
         $config = $this->trigger('defaults')->configure(false);

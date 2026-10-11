@@ -234,15 +234,27 @@ class Trigger
      *
      * Without a timeout a connection that silently stops delivering (no FIN or
      * RST) blocks the read forever, and StartCommand's retry never runs. The
-     * source sends a heartbeat whenever the binlog is quiet for one heartbeat
-     * period, so a live stream is never silent for several periods: a timeout
-     * of at least three periods only fires on a dead connection. The timeout
-     * raises a SocketException, which StartCommand retries from the last
-     * persisted checkpoint.
+     * timeout counts time without any new byte, not time to finish a packet.
+     * The source's dump thread sends a heartbeat whenever it has nothing to
+     * send for one heartbeat period, so a live stream is rarely silent for
+     * several periods; the heartbeat shares that thread, though, so a stalled
+     * source can delay it too. A timeout below three periods is refused. The
+     * timeout raises a SocketException, which StartCommand retries from the
+     * last persisted checkpoint.
      */
     public function replicationSocket(): Socket
     {
-        $timeout = (float) $this->getConfig('read_timeout', 0);
+        $configured = $this->getConfig('read_timeout', 0);
+
+        if (! is_numeric($configured) || ! is_finite((float) $configured)) {
+            throw new LogicException(sprintf(
+                "Replication '%s': read_timeout must be a number of seconds, got %s",
+                $this->name,
+                var_export($configured, true),
+            ));
+        }
+
+        $timeout = (float) $configured;
 
         if ($timeout === 0.0) {
             return new Socket();
