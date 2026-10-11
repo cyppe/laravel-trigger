@@ -260,8 +260,12 @@ class Trigger
         $timeout = (float) $configured;
 
         // Only a written zero turns the timeout off: a value that underflows to 0.0 ('1e-9999') is refused
-        // below like any other value under the floor.
-        if ($timeout === 0.0 && preg_match('/^[^eE]*[1-9]/', (string) $configured) !== 1) {
+        // below like any other value under the floor. The mantissa is scanned without a regex, whose failure on a
+        // pathological string must not read as "zero".
+        $text = (string) $configured;
+        $mantissa = substr($text, 0, strcspn($text, 'eE'));
+
+        if ($timeout === 0.0 && strpbrk($mantissa, '123456789') === false) {
             return new Socket();
         }
 

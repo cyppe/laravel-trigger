@@ -126,6 +126,15 @@ final class TriggerIngestionFeaturesTest extends TestCase
         $this->triggerFromConfigFile('read-timeout-env-underflow', '1e-9999')->replicationSocket();
     }
 
+    public function testReadTimeoutThatUnderflowsWithAMantissaTooLongForARegexFailsClosed(): void
+    {
+        // Over PCRE's default backtrack limit: a regex check would fail and must not count as a written zero.
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage("Replication 'read-timeout-long-underflow': read_timeout must be 0 (off) or at least three heartbeat periods");
+
+        $this->trigger('read-timeout-long-underflow', ['read_timeout' => '1.' . str_repeat('0', 1_100_000) . 'e-400', 'heartbeat' => 3])->replicationSocket();
+    }
+
     public function testReadTimeoutWrittenAsZeroInAnotherFormStaysOff(): void
     {
         self::assertSame(0.0, $this->socketTimeout($this->triggerFromConfigFile('read-timeout-env-zero', '0.0e5')->replicationSocket()));
