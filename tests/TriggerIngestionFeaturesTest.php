@@ -99,6 +99,38 @@ final class TriggerIngestionFeaturesTest extends TestCase
         $this->triggerFromConfigFile('read-timeout-env-invalid', 'thirty')->replicationSocket();
     }
 
+    #[DataProvider('nullEnvironmentValues')]
+    public function testReadTimeoutFromTheEnvironmentThatIsNullFailsClosed(string $value): void
+    {
+        // env() turns "null" and "(null)" into null; it must not fall back to 0 (off).
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage("Replication 'read-timeout-env-null': read_timeout must be a number of seconds, got NULL");
+
+        $this->triggerFromConfigFile('read-timeout-env-null', $value)->replicationSocket();
+    }
+
+    /**
+     * @return iterable<string, array{0: string}>
+     */
+    public static function nullEnvironmentValues(): iterable
+    {
+        yield 'null' => ['null'];
+        yield '(null)' => ['(null)'];
+    }
+
+    public function testReadTimeoutThatUnderflowsToZeroFailsClosed(): void
+    {
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage("Replication 'read-timeout-env-underflow': read_timeout must be 0 (off) or at least three heartbeat periods (9 s), got 1e-9999 s");
+
+        $this->triggerFromConfigFile('read-timeout-env-underflow', '1e-9999')->replicationSocket();
+    }
+
+    public function testReadTimeoutWrittenAsZeroInAnotherFormStaysOff(): void
+    {
+        self::assertSame(0.0, $this->socketTimeout($this->triggerFromConfigFile('read-timeout-env-zero', '0.0e5')->replicationSocket()));
+    }
+
     #[DataProvider('unsafeReadTimeouts')]
     public function testReadTimeoutThatCouldFireOnAQuietLiveStreamFailsClosed(mixed $timeout, int $heartbeat): void
     {

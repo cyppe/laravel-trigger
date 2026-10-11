@@ -244,7 +244,10 @@ class Trigger
      */
     public function replicationSocket(): Socket
     {
-        $configured = $this->getConfig('read_timeout', 0);
+        // An explicit null (TRIGGER_READ_TIMEOUT=null) must fail like any other non-number; getConfig() would
+        // replace it with the default and turn the timeout off.
+        $config = $this->getConfig();
+        $configured = array_key_exists('read_timeout', $config) ? $config['read_timeout'] : 0;
 
         if (! is_numeric($configured) || ! is_finite((float) $configured)) {
             throw new LogicException(sprintf(
@@ -256,7 +259,9 @@ class Trigger
 
         $timeout = (float) $configured;
 
-        if ($timeout === 0.0) {
+        // Only a written zero turns the timeout off: a value that underflows to 0.0 ('1e-9999') is refused
+        // below like any other value under the floor.
+        if ($timeout === 0.0 && preg_match('/^[^eE]*[1-9]/', (string) $configured) !== 1) {
             return new Socket();
         }
 
@@ -267,7 +272,7 @@ class Trigger
                 "Replication '%s': read_timeout must be 0 (off) or at least three heartbeat periods (%s s), got %s s",
                 $this->name,
                 3 * $heartbeat,
-                $timeout,
+                $configured,
             ));
         }
 
